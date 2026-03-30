@@ -20,8 +20,8 @@ bold()    { echo -e "${BOLD}$*${RESET}"; }
 dim()     { echo -e "${DIM}$*${RESET}"; }
 
 # ── Параметры ─────────────────────────────────────────────────────────────────
-GITHUB_USER="YOUR_USER"      # ← замените на ваш GitHub username
-GITHUB_REPO="ai"             # ← репозиторий
+GITHUB_USER="mutiev"
+GITHUB_REPO="ai-command-helper"
 BRANCH="main"
 
 RAW_URL="https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/${BRANCH}/ai"
