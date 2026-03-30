@@ -23,15 +23,38 @@ from pathlib import Path
 
 # ── Зависимости ─────────────────────────────────────────────────────────────
 
+VENV_DIR = Path.home() / ".local" / "share" / "ai" / "venv"
+
 def ensure_deps():
     try:
         import anthropic  # noqa: F401
+        return
     except ImportError:
+        pass
+
+    # Попытка прямой установки через pip
+    try:
         print("Устанавливаю anthropic...", file=sys.stderr)
         subprocess.check_call(
             [sys.executable, "-m", "pip", "install", "-q", "anthropic"],
             stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
+        return
+    except subprocess.CalledProcessError:
+        pass
+
+    # PEP 668: создаём venv и перезапускаем себя через него
+    print("Создаю виртуальное окружение (PEP 668)...", file=sys.stderr)
+    VENV_DIR.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.check_call([sys.executable, "-m", "venv", str(VENV_DIR)])
+    venv_pip = str(VENV_DIR / "bin" / "pip")
+    subprocess.check_call(
+        [venv_pip, "install", "-q", "anthropic"],
+        stdout=subprocess.DEVNULL,
+    )
+    venv_python = str(VENV_DIR / "bin" / "python")
+    os.execv(venv_python, [venv_python] + sys.argv)
 
 ensure_deps()
 import anthropic  # noqa: E402

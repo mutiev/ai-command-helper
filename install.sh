@@ -97,10 +97,18 @@ chmod +x "$INSTALL_DIR/ai"
 success "Скрипт установлен: $INSTALL_DIR/ai"
 
 # ── Устанавливаем зависимость ─────────────────────────────────────────────────
+VENV_DIR="$HOME/.local/share/ai/venv"
+
 info "Устанавливаю Python-зависимость (anthropic)..."
-python3 -m pip install -q --user anthropic \
-    && success "anthropic установлен" \
-    || warn "Не удалось установить anthropic — при первом запуске ai сделает это сам"
+if python3 -m pip install -q --user anthropic 2>/dev/null; then
+    success "anthropic установлен"
+else
+    warn "Обнаружено externally-managed окружение (PEP 668) — создаю venv..."
+    mkdir -p "$(dirname "$VENV_DIR")"
+    python3 -m venv "$VENV_DIR"
+    "$VENV_DIR/bin/pip" install -q anthropic
+    success "anthropic установлен в venv: $VENV_DIR"
+fi
 
 # ── PATH ─────────────────────────────────────────────────────────────────────
 # Проверяем, есть ли INSTALL_DIR в PATH
