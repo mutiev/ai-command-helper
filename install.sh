@@ -25,10 +25,12 @@ GITHUB_REPO="ai-command-helper"             # ← репозиторий
 BRANCH="main"
 
 RAW_URL="https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/${BRANCH}/ai.py"
+PROMPT_URL="https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/${BRANCH}/default_prompt.md"
 
 INSTALL_DIR="${AI_INSTALL_DIR:-$HOME/.local/bin}"
 CONFIG_DIR="$HOME/.config/ai"
 KEY_FILE="$CONFIG_DIR/api_key"
+PROMPT_FILE="$CONFIG_DIR/system_prompt"
 
 # ── Баннер ────────────────────────────────────────────────────────────────────
 echo ""
@@ -95,6 +97,29 @@ fi
 cp "$TMPFILE" "$INSTALL_DIR/ai"
 chmod +x "$INSTALL_DIR/ai"
 success "Скрипт установлен: $INSTALL_DIR/ai"
+
+# ── Загружаем системный промпт ───────────────────────────────────────────────
+if [[ ! -f "$PROMPT_FILE" ]]; then
+    info "Загружаю системный промпт по умолчанию..."
+    PROMPT_TMP=$(mktemp /tmp/ai_prompt.XXXXXX)
+    trap 'rm -f "$TMPFILE" "$PROMPT_TMP"' EXIT
+
+    if [[ "$DOWNLOADER" == "curl" ]]; then
+        curl -fsSL "$PROMPT_URL" -o "$PROMPT_TMP" \
+            || error "Не удалось загрузить: $PROMPT_URL"
+    else
+        wget -qO "$PROMPT_TMP" "$PROMPT_URL" \
+            || error "Не удалось загрузить: $PROMPT_URL"
+    fi
+
+    cp "$PROMPT_TMP" "$PROMPT_FILE"
+    success "Системный промпт: $PROMPT_FILE"
+    dim "    Редактирование: ai --edit-prompt"
+    dim "    Сброс:          ai --reset-prompt"
+else
+    success "Системный промпт уже существует — пропускаю"
+    dim "    Редактирование: ai --edit-prompt"
+fi
 
 # ── Устанавливаем зависимость ─────────────────────────────────────────────────
 VENV_DIR="$HOME/.local/share/ai/venv"

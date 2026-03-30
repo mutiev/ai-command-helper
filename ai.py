@@ -86,14 +86,44 @@ MODEL   = "claude-sonnet-4-5"
 MAX_TOK = 4096
 
 DEFAULT_SYSTEM = textwrap.dedent("""\
-    Ты — ассистент в терминале Linux. Пользователь работает по SSH.
-    Правила:
-    1. Когда задача решается командой — выдавай ТОЛЬКО команду (или несколько),
-       без лишних объяснений, если не просят объяснений.
-    2. Обворачивай команды в ```bash``` блоки.
-    3. Если нужно посмотреть другие файлы/каталоги — используй инструменты.
+    ## Роль
+
+    Ты — ассистент в терминале Linux/macOS. Пользователь работает в CLI.
+
+    ## Формат ответов
+
+    1. Когда задача решается командой — выдавай ТОЛЬКО команду (или pipeline),
+       без объяснений, если пользователь не просит объяснения.
+    2. Оборачивай команды в ```bash``` блоки.
+    3. Если нужно несколько шагов — нумеруй их.
     4. Будь лаконичен. Терминал — не место для эссе.
+
+    ## Поведение
+
     5. Если задача неоднозначна — сначала уточни, потом предлагай решение.
+    6. Если запрос опасен (rm -rf /, DROP DATABASE) — предупреди, но не отказывай.
+    7. Предпочитай POSIX-совместимые команды, если нет причин использовать специфичные.
+
+    ## Инструменты
+
+    8. Если нужно посмотреть файлы/каталоги — используй доступные инструменты
+       (list_directory, read_file, run_command), а не проси пользователя
+       копировать вывод вручную.
+    9. run_command — только для чтения данных (df, ps, cat, grep и т.п.).
+       НЕ используй для команд, изменяющих систему.
+
+    ## Контекст
+
+    10. Рабочий каталог, листинги и содержимое файлов передаются автоматически.
+        Учитывай их при ответе.
+    11. Если пользователь передал файл с ошибками — анализируй конкретные строки,
+        не пересказывай весь файл.
+
+    ## Стиль
+
+    12. Язык ответа — тот же, на котором задан вопрос.
+    13. Для команд и путей используй моноширинный шрифт (```).
+    14. Если задача решается однострочником — не разбивай на скрипт.
 """)
 
 # ── ANSI-цвета ───────────────────────────────────────────────────────────────
@@ -158,10 +188,17 @@ def read_api_key() -> str:
     print()
     return key
 
+def _ensure_system_prompt_file():
+    """Создаёт файл системного промпта с дефолтом, если его нет."""
+    if not SYSTEM_FILE.exists():
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        SYSTEM_FILE.write_text(DEFAULT_SYSTEM)
+    return SYSTEM_FILE
+
+
 def read_system_prompt() -> str:
-    if SYSTEM_FILE.exists():
-        return SYSTEM_FILE.read_text().strip()
-    return DEFAULT_SYSTEM
+    _ensure_system_prompt_file()
+    return SYSTEM_FILE.read_text().strip()
 
 def list_dir(path: str, max_entries: int = 200) -> str:
     """Список файлов каталога — для контекста и tool use."""
@@ -718,6 +755,8 @@ def main():
               ai --no-save "быстрый вопрос"   # без сохранения сессии
               ai --sessions                    # список сессий для каталога
               ai --sessions --all              # список всех сессий
+              ai --edit-prompt                 # редактировать системный промпт
+              ai --reset-prompt                # сбросить промпт к дефолтному
               ai           # интерактивный режим с меню
         """),
     )
@@ -731,7 +770,22 @@ def main():
     parser.add_argument("--clear-session", metavar="ID", help="Удалить сессию по ID")
     parser.add_argument("-v", "--verbose", action="store_true", help="Показывать вызовы инструментов")
     parser.add_argument("--setup", action="store_true", help="Интерактивная настройка")
+    parser.add_argument("--edit-prompt", action="store_true", help="Открыть системный промпт в $EDITOR")
+    parser.add_argument("--reset-prompt", action="store_true", help="Сбросить системный промпт к дефолтному")
     args = parser.parse_args()
+
+    # ── Редактирование / сброс системного промпта ────────────────────────
+    if args.edit_prompt:
+        path = _ensure_system_prompt_file()
+        editor = os.environ.get("EDITOR", "nano")
+        print(color(f"Открываю {path} в {editor}...", DIM))
+        os.execvp(editor, [editor, str(path)])
+
+    if args.reset_prompt:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        SYSTEM_FILE.write_text(DEFAULT_SYSTEM)
+        print(color(f"✓ Промпт сброшен к дефолтному: {SYSTEM_FILE}", GREEN))
+        return
 
     # ── Первичная настройка ──────────────────────────────────────────────
     if args.setup:
