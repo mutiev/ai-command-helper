@@ -28,7 +28,8 @@ VENV_DIR = Path.home() / ".local" / "share" / "ai" / "venv"
 def _reexec_in_venv():
     """Перезапуск через Python из venv (мгновенно, без повторной установки)."""
     venv_python = VENV_DIR / "bin" / "python"
-    if venv_python.is_file() and Path(sys.executable).resolve() != venv_python.resolve():
+    # sys.prefix == sys.base_prefix → мы НЕ в venv
+    if venv_python.is_file() and sys.prefix == sys.base_prefix:
         os.execv(str(venv_python), [str(venv_python)] + sys.argv)
 
 def ensure_deps():
