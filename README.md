@@ -30,7 +30,7 @@ du -sh /* 2>/dev/null | sort -rh | head -20
 ### Через curl (рекомендуется)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mutiev/ai-command-helper/main/install.sh | bash
+curl -fsSL "https://raw.githubusercontent.com/mutiev/ai-command-helper/main/install.sh?$(date +%s)" | bash
 ```
 
 Скрипт:
