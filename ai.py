@@ -368,7 +368,7 @@ def _serialize_content(content):
     return str(content)
 
 
-def _extract_preview(messages: list, max_len: int = 60) -> str:
+def _extract_preview(messages: list, max_len: int = 40) -> str:
     """Первый user-вопрос как краткое описание сессии."""
     for m in messages:
         if m["role"] == "user" and isinstance(m["content"], str):
@@ -440,8 +440,14 @@ def list_sessions(cwd_only: bool = True) -> list:
             try:
                 data = json.loads(f.read_text())
                 msgs = data.get("messages", [])
-                user_msgs = sum(1 for m in msgs if m.get("role") == "user")
-                asst_msgs = sum(1 for m in msgs if m.get("role") == "assistant")
+                user_msgs = sum(
+                    1 for m in msgs
+                    if m.get("role") == "user" and isinstance(m.get("content"), str)
+                )
+                asst_msgs = sum(
+                    1 for m in msgs
+                    if m.get("role") == "assistant" and isinstance(m.get("content"), str)
+                )
                 sessions.append({
                     "id": f.stem,
                     "updated": data.get("updated", "?"),
