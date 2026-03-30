@@ -16,6 +16,7 @@ import os
 import sys
 import json
 import stat
+import hashlib
 import argparse
 import textwrap
 import subprocess
@@ -33,9 +34,12 @@ def _reexec_in_venv():
     if venv_python.is_file() and sys.prefix == sys.base_prefix:
         os.execv(str(venv_python), [str(venv_python)] + sys.argv)
 
+DEPS = ["anthropic", "questionary"]
+
 def ensure_deps():
     try:
         import anthropic  # noqa: F401
+        import questionary  # noqa: F401
         return
     except ImportError:
         pass
@@ -46,9 +50,9 @@ def ensure_deps():
 
     # Попытка прямой установки через pip
     try:
-        print("Устанавливаю anthropic...", file=sys.stderr)
+        print("Устанавливаю зависимости...", file=sys.stderr)
         subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "-q", "anthropic"],
+            [sys.executable, "-m", "pip", "install", "-q"] + DEPS,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -62,13 +66,14 @@ def ensure_deps():
     subprocess.check_call([sys.executable, "-m", "venv", str(VENV_DIR)])
     venv_pip = str(VENV_DIR / "bin" / "pip")
     subprocess.check_call(
-        [venv_pip, "install", "-q", "anthropic"],
+        [venv_pip, "install", "-q"] + DEPS,
         stdout=subprocess.DEVNULL,
     )
     _reexec_in_venv()
 
 ensure_deps()
-import anthropic  # noqa: E402
+import anthropic   # noqa: E402
+import questionary  # noqa: E402
 
 # ── Конфиг ──────────────────────────────────────────────────────────────────
 
@@ -332,6 +337,24 @@ def render(text: str):
 
 # ── Сессии ────────────────────────────────────────────────────────────────────
 
+def _cwd_hash() -> str:
+    """Короткий хеш текущего каталога — имя подпапки для сессий."""
+    return hashlib.sha256(str(Path.cwd()).encode()).hexdigest()[:8]
+
+
+def _sessions_path() -> Path:
+    """Путь к каталогу сессий текущего cwd."""
+    return SESSIONS_DIR / _cwd_hash()
+
+
+def _ensure_meta():
+    """Создаёт/обновляет _meta.json с полным путём cwd."""
+    d = _sessions_path()
+    d.mkdir(parents=True, exist_ok=True)
+    meta = d / "_meta.json"
+    meta.write_text(json.dumps({"path": str(Path.cwd())}, ensure_ascii=False))
+
+
 def _serialize_content(content):
     """Сериализует content блоки (включая SDK-объекты) в JSON-совместимый формат."""
     if isinstance(content, str):
@@ -345,24 +368,40 @@ def _serialize_content(content):
     return str(content)
 
 
-def save_session(name: str, messages: list):
-    """Сохраняет сессию на диск."""
-    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+def _extract_preview(messages: list, max_len: int = 60) -> str:
+    """Первый user-вопрос как краткое описание сессии."""
+    for m in messages:
+        if m["role"] == "user" and isinstance(m["content"], str):
+            text = m["content"].replace("\n", " ").strip()
+            return text[:max_len] + ("…" if len(text) > max_len else "")
+    return "—"
+
+
+def new_session_id() -> str:
+    """Генерирует ID новой сессии (ISO-timestamp)."""
+    return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def save_session(session_id: str, messages: list):
+    """Сохраняет сессию на диск в каталог текущего cwd."""
+    _ensure_meta()
+    # Определяем started из имени файла или первого сообщения
     data = {
+        "started": session_id,
         "updated": datetime.now().isoformat(timespec="seconds"),
-        "cwd": str(Path.cwd()),
+        "preview": _extract_preview(messages),
         "messages": [
             {"role": m["role"], "content": _serialize_content(m["content"])}
             for m in messages
         ],
     }
-    path = SESSIONS_DIR / f"{name}.json"
+    path = _sessions_path() / f"{session_id}.json"
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
 
-def load_session(name: str) -> list:
+def load_session(session_id: str) -> list:
     """Загружает сессию из файла."""
-    path = SESSIONS_DIR / f"{name}.json"
+    path = _sessions_path() / f"{session_id}.json"
     if not path.exists():
         return []
     try:
@@ -372,33 +411,195 @@ def load_session(name: str) -> list:
         return []
 
 
-def list_sessions() -> list:
-    """Возвращает информацию о сохранённых сессиях."""
+def list_sessions(cwd_only: bool = True) -> list:
+    """Возвращает информацию о сохранённых сессиях.
+    cwd_only=True — только для текущего каталога.
+    cwd_only=False — все каталоги.
+    """
     if not SESSIONS_DIR.exists():
         return []
+
     sessions = []
-    for f in sorted(SESSIONS_DIR.glob("*.json")):
-        try:
-            data = json.loads(f.read_text())
-            user_msgs = sum(1 for m in data.get("messages", []) if m["role"] == "user")
-            sessions.append({
-                "name": f.stem,
-                "updated": data.get("updated", "?"),
-                "cwd": data.get("cwd", "?"),
-                "exchanges": user_msgs,
-            })
-        except (json.JSONDecodeError, KeyError):
+    dirs = [_sessions_path()] if cwd_only else sorted(SESSIONS_DIR.iterdir())
+
+    for d in dirs:
+        if not d.is_dir():
             continue
+        # Читаем путь из _meta.json
+        meta_path = d / "_meta.json"
+        cwd_path = "?"
+        if meta_path.exists():
+            try:
+                cwd_path = json.loads(meta_path.read_text()).get("path", "?")
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+        for f in sorted(d.glob("*.json"), reverse=True):
+            if f.name == "_meta.json":
+                continue
+            try:
+                data = json.loads(f.read_text())
+                msgs = data.get("messages", [])
+                user_msgs = sum(1 for m in msgs if m.get("role") == "user")
+                asst_msgs = sum(1 for m in msgs if m.get("role") == "assistant")
+                sessions.append({
+                    "id": f.stem,
+                    "updated": data.get("updated", "?"),
+                    "preview": data.get("preview", "—"),
+                    "cwd": cwd_path,
+                    "user_msgs": user_msgs,
+                    "asst_msgs": asst_msgs,
+                })
+            except (json.JSONDecodeError, KeyError):
+                continue
+
+    # Сортировка по updated desc
+    sessions.sort(key=lambda s: s["updated"], reverse=True)
     return sessions
 
 
-def delete_session(name: str) -> bool:
-    """Удаляет файл сессии. Возвращает True если файл существовал."""
-    path = SESSIONS_DIR / f"{name}.json"
+def delete_session(session_id: str) -> bool:
+    """Удаляет файл сессии из текущего cwd. Возвращает True если существовал."""
+    path = _sessions_path() / f"{session_id}.json"
     if path.exists():
         path.unlink()
         return True
     return False
+
+
+# ── Интерактивное меню ────────────────────────────────────────────────────────
+
+def _top_entries(path: Path = None, n: int = 10) -> list:
+    """Top-N видимых объектов из каталога: каталоги первыми, файлы по mtime desc.
+    Пропускает hidden (.) и бинарные файлы.
+    Возвращает [{"name": str, "is_dir": bool, "size": int}].
+    """
+    if path is None:
+        path = Path.cwd()
+    try:
+        entries = list(path.iterdir())
+    except PermissionError:
+        return []
+
+    result = []
+    for e in entries:
+        if e.name.startswith("."):
+            continue
+        try:
+            st = e.stat()
+        except (PermissionError, OSError):
+            continue
+        is_dir = e.is_dir()
+        if e.is_file():
+            # Быстрая проверка на бинарный файл
+            try:
+                with e.open("rb") as f:
+                    chunk = f.read(512)
+                if b"\x00" in chunk:
+                    continue
+            except (PermissionError, OSError):
+                continue
+        result.append({
+            "name": e.name + ("/" if is_dir else ""),
+            "is_dir": is_dir,
+            "size": st.st_size if not is_dir else 0,
+            "mtime": st.st_mtime,
+        })
+
+    # Каталоги первыми, затем файлы по mtime desc
+    result.sort(key=lambda x: (not x["is_dir"], -x["mtime"]))
+    return result[:n]
+
+
+def _format_session_label(s: dict) -> str:
+    """Форматирует строку для questionary select."""
+    try:
+        dt = datetime.fromisoformat(s["updated"])
+        ts = dt.strftime("%d.%m %H:%M")
+    except (ValueError, KeyError):
+        ts = s.get("updated", "?")
+    return f"{ts}  ({s['user_msgs']}↑ {s['asst_msgs']}↓)  {s['preview']}"
+
+
+def interactive_menu() -> tuple:
+    """Интерактивное меню при запуске `ai` без аргументов.
+    Возвращает (messages, extra_dirs, extra_files, session_id).
+    """
+    sessions = list_sessions(cwd_only=True)
+    cwd = Path.cwd()
+
+    # ── Шаг 1: выбор сессии ──────────────────────────────────────────
+    choices = []
+    top_sessions = sessions[:5]
+
+    for s in top_sessions:
+        choices.append(questionary.Choice(
+            title=_format_session_label(s),
+            value=s["id"],
+        ))
+
+    if len(sessions) > 5:
+        choices.append(questionary.Separator(f"  … и ещё {len(sessions) - 5} сессий"))
+
+    choices.append(questionary.Separator())
+    choices.append(questionary.Choice(title="✚ Новая сессия", value=None))
+
+    if sessions:
+        session_id = questionary.select(
+            "Сессия:",
+            choices=choices,
+        ).ask()
+        if session_id is False:  # Ctrl+C
+            sys.exit(0)
+    else:
+        session_id = None
+
+    # Загружаем историю или начинаем новую
+    if session_id is not None:
+        messages = load_session(session_id)
+    else:
+        session_id = new_session_id()
+        messages = []
+
+    # ── Шаг 2: контекст ──────────────────────────────────────────────
+    entries = _top_entries(cwd)
+    ctx_choices = [
+        questionary.Choice(
+            title=f"📁 передать листинг каталога ({cwd.name}/)",
+            value="__dir__",
+            checked=False,
+        ),
+    ]
+    for e in entries:
+        ctx_choices.append(questionary.Choice(
+            title=e["name"],
+            value=e["name"].rstrip("/"),
+            checked=False,
+        ))
+
+    if ctx_choices:
+        selected = questionary.checkbox(
+            "Контекст (Space — выбрать, Enter — продолжить):",
+            choices=ctx_choices,
+        ).ask()
+        if selected is None:  # Ctrl+C
+            sys.exit(0)
+    else:
+        selected = []
+
+    extra_dirs = []
+    extra_files = []
+    for item in selected:
+        if item == "__dir__":
+            extra_dirs.append(str(cwd))
+        else:
+            p = cwd / item
+            if p.is_dir():
+                extra_dirs.append(str(p))
+            elif p.is_file():
+                extra_files.append(str(p))
+
+    return messages, extra_dirs, extra_files, session_id
 
 
 # ── Основной цикл ─────────────────────────────────────────────────────────────
@@ -453,7 +654,6 @@ def build_context(extra_dirs: list, extra_files: list) -> str:
     """Формирует системный контекст: cwd + переданные пути."""
     cwd = Path.cwd()
     parts = [f"## Рабочий каталог: {cwd}"]
-    parts.append(list_dir(str(cwd)))
 
     for d in extra_dirs:
         parts.append(f"\n## Каталог: {d}")
@@ -480,18 +680,22 @@ def main():
               ai "как найти файлы больше 100MB?"
               ai -d /etc/nginx "объясни конфиг"
               ai -f error.log "что означает эта ошибка?"
-              ai -s deploy "что в логах?"     # сессия с накоплением контекста
-              ai -s deploy "а что было вчера?" # продолжение той же сессии
-              ai --sessions                    # список сохранённых сессий
-              ai           # интерактивный режим
+              ai -s deploy "что в логах?"     # именованная сессия
+              ai -s deploy "а что было вчера?" # продолжение
+              ai --no-save "быстрый вопрос"   # без сохранения сессии
+              ai --sessions                    # список сессий для каталога
+              ai --sessions --all              # список всех сессий
+              ai           # интерактивный режим с меню
         """),
     )
     parser.add_argument("query", nargs="?", help="Вопрос (если не указан — интерактивный режим)")
     parser.add_argument("-d", "--dir",  action="append", default=[], metavar="PATH", help="Дополнительный каталог для контекста")
     parser.add_argument("-f", "--file", action="append", default=[], metavar="PATH", help="Дополнительный файл для контекста")
-    parser.add_argument("-s", "--session", metavar="NAME", help="Имя сессии для накопления контекста между запусками")
-    parser.add_argument("--sessions", action="store_true", help="Показать список сохранённых сессий")
-    parser.add_argument("--clear-session", metavar="NAME", help="Удалить сохранённую сессию")
+    parser.add_argument("-s", "--session", metavar="NAME", help="Имя сессии (обходит интерактивное меню)")
+    parser.add_argument("--no-save", action="store_true", help="Не сохранять сессию (одноразовый вопрос)")
+    parser.add_argument("--sessions", action="store_true", help="Показать список сессий для текущего каталога")
+    parser.add_argument("--all", action="store_true", help="Вместе с --sessions: показать сессии всех каталогов")
+    parser.add_argument("--clear-session", metavar="ID", help="Удалить сессию по ID")
     parser.add_argument("-v", "--verbose", action="store_true", help="Показывать вызовы инструментов")
     parser.add_argument("--setup", action="store_true", help="Интерактивная настройка")
     args = parser.parse_args()
@@ -508,14 +712,19 @@ def main():
 
     # ── Список сессий ────────────────────────────────────────────────
     if args.sessions:
-        sessions = list_sessions()
+        sessions = list_sessions(cwd_only=not args.all)
         if not sessions:
-            print(color("Нет сохранённых сессий.", DIM))
+            label = "Нет сохранённых сессий." if args.all else f"Нет сессий для {Path.cwd()}."
+            print(color(label, DIM))
             return
-        print(color("Сохранённые сессии:", BOLD))
+        if not args.all:
+            print(color(f"Сессии для {Path.cwd()}:", BOLD))
+        else:
+            print(color("Все сессии:", BOLD))
         for s in sessions:
-            print(f"  {color(s['name'], CYAN + BOLD)}"
-                  f"  {DIM}({s['exchanges']} обм., {s['updated']}, {s['cwd']}){RESET}")
+            label = _format_session_label(s)
+            cwd_info = f"  {DIM}{s['cwd']}{RESET}" if args.all else ""
+            print(f"  {color(s['id'], CYAN + BOLD)}  {label}{cwd_info}")
         return
 
     # ── Удаление сессии ──────────────────────────────────────────────
@@ -545,32 +754,65 @@ def main():
     client  = anthropic.Anthropic(api_key=api_key)
     system  = read_system_prompt()
 
-    ctx = build_context(args.dir, args.file)
-    full_system = system + "\n\n" + ctx
-
     # ── Режим одного вопроса ──────────────────────────────────────────────
     if args.query:
-        messages = load_session(args.session) if args.session else []
+        # Определяем сессию
+        if args.session:
+            session_id = args.session
+            messages = load_session(session_id)
+        elif args.no_save:
+            session_id = None
+            messages = []
+        else:
+            session_id = new_session_id()
+            messages = []
+
+        ctx = build_context(args.dir, args.file)
+        full_system = system + "\n\n" + ctx
+
         messages.append({"role": "user", "content": args.query})
         answer = ask(client, messages, full_system)
         messages.append({"role": "assistant", "content": answer})
-        if args.session:
-            save_session(args.session, messages)
+
+        if session_id is not None:
+            save_session(session_id, messages)
+
         render(answer)
         return
 
     # ── Интерактивный режим ────────────────────────────────────────────────
-    session_name = args.session
     print(color("Claude AI · терминал-ассистент", BOLD + CYAN))
     print(color(f"  Каталог: {Path.cwd()}  |  Модель: {MODEL}", DIM))
-    if session_name:
-        print(color(f"  Сессия: {session_name}", DIM))
-    print(color("  Введите вопрос или 'exit' для выхода\n", DIM))
 
-    messages: list = load_session(session_name) if session_name else []
-    if messages and session_name:
-        n = sum(1 for m in messages if m["role"] == "user")
-        print(color(f"  ↻ Загружена сессия «{session_name}» ({n} обменов)\n", DIM + YELLOW))
+    if args.session:
+        # Прямой режим с именованной сессией (обходим меню)
+        session_id = args.session
+        messages = load_session(session_id)
+        extra_dirs = list(args.dir)
+        extra_files = list(args.file)
+        if messages:
+            n = sum(1 for m in messages if m["role"] == "user")
+            print(color(f"  ↻ Сессия «{session_id}» ({n} обменов)", DIM + YELLOW))
+    elif _tty():
+        # Интерактивное меню
+        print()
+        messages, menu_dirs, menu_files, session_id = interactive_menu()
+        extra_dirs = list(args.dir) + menu_dirs
+        extra_files = list(args.file) + menu_files
+        if load_session(session_id) != []:
+            n = sum(1 for m in messages if m["role"] == "user")
+            print(color(f"\n  ↻ Загружена сессия ({n} обменов)", DIM + YELLOW))
+    else:
+        # Не-TTY: новая сессия без меню
+        session_id = new_session_id()
+        messages = []
+        extra_dirs = list(args.dir)
+        extra_files = list(args.file)
+
+    ctx = build_context(extra_dirs, extra_files)
+    full_system = system + "\n\n" + ctx
+
+    print(color("  Введите вопрос или 'exit' для выхода\n", DIM))
 
     while True:
         try:
@@ -590,11 +832,10 @@ def main():
 
         messages.append({"role": "user", "content": query})
         answer = ask(client, messages, full_system)
-        # Сохраняем финальный ответ в историю
         messages.append({"role": "assistant", "content": answer})
 
-        if session_name:
-            save_session(session_name, messages)
+        # Автосохранение после каждого обмена
+        save_session(session_id, messages)
 
         print()
         render(answer)
