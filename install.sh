@@ -20,11 +20,11 @@ bold()    { echo -e "${BOLD}$*${RESET}"; }
 dim()     { echo -e "${DIM}$*${RESET}"; }
 
 # ── Параметры ─────────────────────────────────────────────────────────────────
-GITHUB_USER="mutiev"
-GITHUB_REPO="ai-command-helper"
+GITHUB_USER="mutiev"      # ← замените на ваш GitHub username
+GITHUB_REPO="ai-command-helper"             # ← репозиторий
 BRANCH="main"
 
-RAW_URL="https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/${BRANCH}/ai"
+RAW_URL="https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/${BRANCH}/ai.py"
 
 INSTALL_DIR="${AI_INSTALL_DIR:-$HOME/.local/bin}"
 CONFIG_DIR="$HOME/.config/ai"
