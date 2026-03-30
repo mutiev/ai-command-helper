@@ -16,7 +16,9 @@ du -sh /* 2>/dev/null | sort -rh | head -20
 ## Справка
 
 ```
-usage: ai [-h] [-d PATH] [-f PATH] [-v] [--setup] [query]
+usage: ai [-h] [-d PATH] [-f PATH] [-s NAME] [--no-save]
+          [--sessions] [--all] [--clear-session ID]
+          [-v] [--setup] [query]
 
 Claude в терминале
 
@@ -27,6 +29,12 @@ options:
   -h, --help            show this help message and exit
   -d PATH, --dir PATH   Дополнительный каталог для контекста
   -f PATH, --file PATH  Дополнительный файл для контекста
+  -s NAME, --session NAME
+                        Имя сессии (обходит интерактивное меню)
+  --no-save             Не сохранять сессию (одноразовый вопрос)
+  --sessions            Показать список сессий для текущего каталога
+  --all                 Вместе с --sessions: показать сессии всех каталогов
+  --clear-session ID    Удалить сессию по ID
   -v, --verbose         Показывать вызовы инструментов
   --setup               Интерактивная настройка
 ```
@@ -56,24 +64,64 @@ ai -f /var/log/syslog "что за ошибки в последний час?"
 ai -d /opt/myapp -f /opt/myapp/config.yml "как изменить порт?"
 ```
 
-### Интерактивный режим
+### Интерактивный режим с меню
 
 ```bash
 ai
 ```
 
-Запускает диалог с памятью — модель помнит контекст разговора в рамках сессии.
+Запускает интерактивное меню (на базе `questionary`), где можно:
+
+1. **Выбрать сессию** — продолжить предыдущий разговор или начать новый
+2. **Выбрать файлы контекста** — чекбоксами отметить файлы/каталоги из cwd для передачи модели
 
 ```
 Claude AI · терминал-ассистент
   Каталог: /home/user/project  |  Модель: claude-sonnet-4-5
+
+? Сессия:
+  ● Новая сессия
+  ○ 30.03 14:22 (3↑ 3↓) почему не работает nginx?
+  ○ 29.03 10:15 (5↑ 5↓) как настроить SSL
+
+? Контекст (файлы из cwd):
+  ☑ docker-compose.yml
+  ☑ Dockerfile
+  ☐ README.md
+  ☐ src/
+
   Введите вопрос или 'exit' для выхода
 
 ❯ что за файлы тут лежат?
 ❯ какой из них самый большой?
-❯ покажи первые 50 строк
 ❯ exit
 ```
+
+История сессии автоматически сохраняется после каждого обмена.
+
+### Сессии
+
+Сессии привязаны к рабочему каталогу (cwd) — каждый каталог имеет свой список сессий.
+
+```bash
+# Именованная сессия (обходит интерактивное меню)
+ai -s deploy "что в логах?"
+ai -s deploy "а что было вчера?"  # продолжение
+
+# Одноразовый вопрос — сессия не сохраняется
+ai --no-save "быстрый вопрос"
+
+# Список сессий для текущего каталога
+ai --sessions
+
+# Список всех сессий (все каталоги)
+ai --sessions --all
+
+# Удалить сессию
+ai --clear-session "2026-03-30T14:22:05"
+```
+
+Сессии хранятся в `~/.config/ai/sessions/{cwd_hash}/` — по одному JSON-файлу на сессию.
 
 ### Первичная настройка
 
@@ -86,8 +134,9 @@ ai --setup
 ## Возможности
 
 - **Однострочный вопрос** — задаёте вопрос, получаете ответ или готовую команду
-- **Интерактивный режим** — диалог с памятью сессии, как чат
-- **Контекст файловой системы** — модель автоматически видит файлы в рабочем каталоге
+- **Интерактивный режим с меню** — выбор сессии и файлов контекста через TUI-меню
+- **Персистентные сессии** — история диалога сохраняется между запусками, привязана к cwd
+- **Контекст файловой системы** — модель видит выбранные файлы из рабочего каталога
 - **Tool use** — модель сама запрашивает содержимое файлов и каталогов при необходимости
 - **Системная информация** — hostname и uname передаются в каждый запрос
 - **Подсветка команд** — блоки `bash` выделяются цветом в терминале
@@ -106,7 +155,7 @@ curl -fsSL "https://raw.githubusercontent.com/mutiev/ai-command-helper/main/inst
 Скрипт:
 - Проверит наличие Python 3.8+
 - Скачает `ai` в `~/.local/bin/`
-- Установит зависимость `anthropic`
+- Установит зависимости `anthropic` и `questionary`
 - Добавит `~/.local/bin` в `PATH` если нужно
 - Спросит API-ключ (если запущен интерактивно)
 
@@ -114,14 +163,14 @@ curl -fsSL "https://raw.githubusercontent.com/mutiev/ai-command-helper/main/inst
 
 ```bash
 ANTHROPIC_API_KEY="sk-ant-..." \
-  curl -fsSL https://raw.githubusercontent.com/YOUR_USER/ai/main/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/mutiev/ai-command-helper/main/install.sh | bash
 ```
 
 ### Вручную
 
 ```bash
 # Скачать скрипт
-curl -fsSL https://raw.githubusercontent.com/YOUR_USER/ai/main/ai \
+curl -fsSL https://raw.githubusercontent.com/mutiev/ai-command-helper/main/ai.py \
   -o ~/.local/bin/ai && chmod +x ~/.local/bin/ai
 
 # Сохранить ключ
@@ -135,7 +184,7 @@ chmod 600 ~/.config/ai/api_key
 Повторно запустите install.sh — скрипт заменит предыдущую версию.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USER/ai/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mutiev/ai-command-helper/main/install.sh | bash
 ```
 
 ---
@@ -191,10 +240,11 @@ journalctl -u myapp --since "1 hour ago" | grep -i "oom\|memory\|killed"
 
 Все файлы конфигурации находятся в `~/.config/ai/`:
 
-| Файл | Назначение |
+| Файл / Каталог | Назначение |
 |---|---|
 | `api_key` | Ключ Anthropic API (режим 600) |
 | `system_prompt` | Кастомный системный промпт (необязательно) |
+| `sessions/` | Каталог с сохранёнными сессиями (по подкаталогам cwd-хэшей) |
 
 ### Кастомный системный промпт
 
@@ -215,7 +265,7 @@ EOF
 - `pip` (установится автоматически через `ensurepip` если нет)
 - Ключ Anthropic API ([получить](https://console.anthropic.com/settings/keys))
 
-Зависимость `anthropic` устанавливается автоматически при первом запуске, если её нет.
+Зависимости `anthropic` и `questionary` устанавливаются автоматически при первом запуске.
 
 ---
 
@@ -223,10 +273,18 @@ EOF
 
 ```
 .
-├── ai            # Основной скрипт (единый файл)
-├── install.sh    # Установщик
-└── README.md
+├── ai.py          # Основной скрипт (единый файл, ~850 строк)
+├── install.sh     # Установщик
+├── README.md
+└── docs/
+    ├── ARCHITECTURE.md   # Архитектура
+    ├── CONFIGURATION.md  # Конфигурация
+    ├── DECISIONS.md      # ADR — журнал решений
+    ├── SECURITY.md       # Модель безопасности
+    └── TOOLS.md          # Описание инструментов модели
 ```
+
+> **Ветка `minimal`** — облегчённая версия без сессий и `questionary`, единственная зависимость `anthropic`.
 
 ---
 

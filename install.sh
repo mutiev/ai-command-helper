@@ -99,21 +99,21 @@ success "Скрипт установлен: $INSTALL_DIR/ai"
 # ── Устанавливаем зависимость ─────────────────────────────────────────────────
 VENV_DIR="$HOME/.local/share/ai/venv"
 
-info "Проверяю Python-зависимость (anthropic)..."
+info "Проверяю Python-зависимости (anthropic, questionary)..."
 
-# Проверяем: anthropic уже доступен в системе или в venv?
-if python3 -c "import anthropic" 2>/dev/null; then
-    success "anthropic уже установлен (системный)"
-elif "$VENV_DIR/bin/python" -c "import anthropic" 2>/dev/null; then
-    success "anthropic уже установлен (venv: $VENV_DIR)"
-elif python3 -m pip install -q --user anthropic 2>/dev/null; then
-    success "anthropic установлен"
+# Проверяем: зависимости уже доступны в системе или в venv?
+if python3 -c "import anthropic; import questionary" 2>/dev/null; then
+    success "anthropic + questionary уже установлены (системный)"
+elif "$VENV_DIR/bin/python" -c "import anthropic; import questionary" 2>/dev/null; then
+    success "anthropic + questionary уже установлены (venv: $VENV_DIR)"
+elif python3 -m pip install -q --user anthropic questionary 2>/dev/null; then
+    success "anthropic + questionary установлены"
 else
     warn "Обнаружено externally-managed окружение (PEP 668) — создаю venv..."
     mkdir -p "$(dirname "$VENV_DIR")"
     python3 -m venv "$VENV_DIR"
-    "$VENV_DIR/bin/pip" install -q anthropic
-    success "anthropic установлен в venv: $VENV_DIR"
+    "$VENV_DIR/bin/pip" install -q anthropic questionary
+    success "anthropic + questionary установлены в venv: $VENV_DIR"
 fi
 
 # ── PATH ─────────────────────────────────────────────────────────────────────
