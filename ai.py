@@ -19,6 +19,7 @@ import stat
 import argparse
 import textwrap
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 # ── Зависимости ─────────────────────────────────────────────────────────────
@@ -71,9 +72,10 @@ import anthropic  # noqa: E402
 
 # ── Конфиг ──────────────────────────────────────────────────────────────────
 
-CONFIG_DIR  = Path.home() / ".config" / "ai"
-KEY_FILE    = CONFIG_DIR / "api_key"
-SYSTEM_FILE = CONFIG_DIR / "system_prompt"   # необязательный кастомный промпт
+CONFIG_DIR   = Path.home() / ".config" / "ai"
+KEY_FILE     = CONFIG_DIR / "api_key"
+SYSTEM_FILE  = CONFIG_DIR / "system_prompt"   # необязательный кастомный промпт
+SESSIONS_DIR = CONFIG_DIR / "sessions"
 
 MODEL   = "claude-sonnet-4-5"
 MAX_TOK = 4096
@@ -328,6 +330,77 @@ def render(text: str):
     if buf:
         flush_code()
 
+# ── Сессии ────────────────────────────────────────────────────────────────────
+
+def _serialize_content(content):
+    """Сериализует content блоки (включая SDK-объекты) в JSON-совместимый формат."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return [_serialize_content(item) for item in content]
+    if isinstance(content, dict):
+        return content
+    if hasattr(content, 'model_dump'):
+        return content.model_dump()
+    return str(content)
+
+
+def save_session(name: str, messages: list):
+    """Сохраняет сессию на диск."""
+    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    data = {
+        "updated": datetime.now().isoformat(timespec="seconds"),
+        "cwd": str(Path.cwd()),
+        "messages": [
+            {"role": m["role"], "content": _serialize_content(m["content"])}
+            for m in messages
+        ],
+    }
+    path = SESSIONS_DIR / f"{name}.json"
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+
+
+def load_session(name: str) -> list:
+    """Загружает сессию из файла."""
+    path = SESSIONS_DIR / f"{name}.json"
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text())
+        return data.get("messages", [])
+    except (json.JSONDecodeError, KeyError):
+        return []
+
+
+def list_sessions() -> list:
+    """Возвращает информацию о сохранённых сессиях."""
+    if not SESSIONS_DIR.exists():
+        return []
+    sessions = []
+    for f in sorted(SESSIONS_DIR.glob("*.json")):
+        try:
+            data = json.loads(f.read_text())
+            user_msgs = sum(1 for m in data.get("messages", []) if m["role"] == "user")
+            sessions.append({
+                "name": f.stem,
+                "updated": data.get("updated", "?"),
+                "cwd": data.get("cwd", "?"),
+                "exchanges": user_msgs,
+            })
+        except (json.JSONDecodeError, KeyError):
+            continue
+    return sessions
+
+
+def delete_session(name: str) -> bool:
+    """Удаляет файл сессии. Возвращает True если файл существовал."""
+    path = SESSIONS_DIR / f"{name}.json"
+    if path.exists():
+        path.unlink()
+        return True
+    return False
+
+
 # ── Основной цикл ─────────────────────────────────────────────────────────────
 
 def ask(client: anthropic.Anthropic, messages: list, system: str) -> str:
@@ -407,12 +480,18 @@ def main():
               ai "как найти файлы больше 100MB?"
               ai -d /etc/nginx "объясни конфиг"
               ai -f error.log "что означает эта ошибка?"
+              ai -s deploy "что в логах?"     # сессия с накоплением контекста
+              ai -s deploy "а что было вчера?" # продолжение той же сессии
+              ai --sessions                    # список сохранённых сессий
               ai           # интерактивный режим
         """),
     )
     parser.add_argument("query", nargs="?", help="Вопрос (если не указан — интерактивный режим)")
     parser.add_argument("-d", "--dir",  action="append", default=[], metavar="PATH", help="Дополнительный каталог для контекста")
     parser.add_argument("-f", "--file", action="append", default=[], metavar="PATH", help="Дополнительный файл для контекста")
+    parser.add_argument("-s", "--session", metavar="NAME", help="Имя сессии для накопления контекста между запусками")
+    parser.add_argument("--sessions", action="store_true", help="Показать список сохранённых сессий")
+    parser.add_argument("--clear-session", metavar="NAME", help="Удалить сохранённую сессию")
     parser.add_argument("-v", "--verbose", action="store_true", help="Показывать вызовы инструментов")
     parser.add_argument("--setup", action="store_true", help="Интерактивная настройка")
     args = parser.parse_args()
@@ -425,6 +504,27 @@ def main():
         KEY_FILE.write_text(key)
         KEY_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)
         print(color(f"✓ Ключ сохранён в {KEY_FILE}", GREEN))
+        return
+
+    # ── Список сессий ────────────────────────────────────────────────
+    if args.sessions:
+        sessions = list_sessions()
+        if not sessions:
+            print(color("Нет сохранённых сессий.", DIM))
+            return
+        print(color("Сохранённые сессии:", BOLD))
+        for s in sessions:
+            print(f"  {color(s['name'], CYAN + BOLD)}"
+                  f"  {DIM}({s['exchanges']} обм., {s['updated']}, {s['cwd']}){RESET}")
+        return
+
+    # ── Удаление сессии ──────────────────────────────────────────────
+    if args.clear_session:
+        if delete_session(args.clear_session):
+            print(color(f"✓ Сессия «{args.clear_session}» удалена.", GREEN))
+        else:
+            print(color(f"✗ Сессия «{args.clear_session}» не найдена.", BOLD), file=sys.stderr)
+            sys.exit(1)
         return
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -450,17 +550,27 @@ def main():
 
     # ── Режим одного вопроса ──────────────────────────────────────────────
     if args.query:
-        messages = [{"role": "user", "content": args.query}]
+        messages = load_session(args.session) if args.session else []
+        messages.append({"role": "user", "content": args.query})
         answer = ask(client, messages, full_system)
+        messages.append({"role": "assistant", "content": answer})
+        if args.session:
+            save_session(args.session, messages)
         render(answer)
         return
 
     # ── Интерактивный режим ────────────────────────────────────────────────
+    session_name = args.session
     print(color("Claude AI · терминал-ассистент", BOLD + CYAN))
     print(color(f"  Каталог: {Path.cwd()}  |  Модель: {MODEL}", DIM))
+    if session_name:
+        print(color(f"  Сессия: {session_name}", DIM))
     print(color("  Введите вопрос или 'exit' для выхода\n", DIM))
 
-    messages: list = []
+    messages: list = load_session(session_name) if session_name else []
+    if messages and session_name:
+        n = sum(1 for m in messages if m["role"] == "user")
+        print(color(f"  ↻ Загружена сессия «{session_name}» ({n} обменов)\n", DIM + YELLOW))
 
     while True:
         try:
@@ -482,6 +592,9 @@ def main():
         answer = ask(client, messages, full_system)
         # Сохраняем финальный ответ в историю
         messages.append({"role": "assistant", "content": answer})
+
+        if session_name:
+            save_session(session_name, messages)
 
         print()
         render(answer)
