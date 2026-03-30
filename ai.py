@@ -561,7 +561,8 @@ def _format_session_label(s: dict) -> str:
         ts = dt.strftime("%d.%m %H:%M")
     except (ValueError, KeyError):
         ts = s.get("updated", "?")
-    return f"{ts}  ({s['user_msgs']}↑ {s['asst_msgs']}↓)  {s['preview']}"
+    n = s["user_msgs"]
+    return f"{ts} ({n} msg) {s['preview']}"
 
 
 def _select_session(sessions: list) -> str:
