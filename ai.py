@@ -527,6 +527,56 @@ def _format_session_label(s: dict) -> str:
     return f"{ts}  ({s['user_msgs']}↑ {s['asst_msgs']}↓)  {s['preview']}"
 
 
+def _select_session(sessions: list) -> str:
+    """Меню выбора сессии с 'd' для удаления. Возвращает session_id или '__new__'."""
+    from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
+
+    while True:
+        choices = []
+        for s in sessions[:5]:
+            choices.append(questionary.Choice(
+                title=_format_session_label(s),
+                value=s["id"],
+            ))
+        if len(sessions) > 5:
+            choices.append(questionary.Separator(f"  … и ещё {len(sessions) - 5} сессий"))
+        choices.append(questionary.Separator())
+        choices.append(questionary.Choice(title="✚ Новая сессия", value="__new__"))
+
+        if not sessions:
+            return "__new__"
+
+        q = questionary.select("Сессия (d — удалить):", choices=choices)
+
+        # Keybinding 'd' → удалить выбранную сессию
+        kb = KeyBindings()
+
+        @kb.add("d")
+        def _handle_d(event):
+            for w in event.app.layout.find_all_windows():
+                ctrl = w.content
+                if hasattr(ctrl, "pointed_at") and hasattr(ctrl, "choices"):
+                    choice = ctrl.choices[ctrl.pointed_at]
+                    val = getattr(choice, "value", None)
+                    if val and val != "__new__":
+                        event.app.exit(result="__del__" + str(val))
+                    return
+
+        app = q.application
+        app.key_bindings = merge_key_bindings([app.key_bindings, kb])
+        result = q.ask()
+
+        if result is None:  # Ctrl+C
+            sys.exit(0)
+        if isinstance(result, str) and result.startswith("__del__"):
+            sid = result[7:]
+            if delete_session(sid):
+                sessions = [s for s in sessions if s["id"] != sid]
+                print(color(f"  ✓ Сессия удалена", GREEN))
+            continue
+        return result
+
+
 def interactive_menu() -> tuple:
     """Интерактивное меню при запуске `ai` без аргументов.
     Возвращает (messages, extra_dirs, extra_files, session_id).
@@ -535,30 +585,7 @@ def interactive_menu() -> tuple:
     cwd = Path.cwd()
 
     # ── Шаг 1: выбор сессии ──────────────────────────────────────────
-    choices = []
-    top_sessions = sessions[:5]
-
-    for s in top_sessions:
-        choices.append(questionary.Choice(
-            title=_format_session_label(s),
-            value=s["id"],
-        ))
-
-    if len(sessions) > 5:
-        choices.append(questionary.Separator(f"  … и ещё {len(sessions) - 5} сессий"))
-
-    choices.append(questionary.Separator())
-    choices.append(questionary.Choice(title="✚ Новая сессия", value="__new__"))
-
-    if sessions:
-        session_id = questionary.select(
-            "Сессия:",
-            choices=choices,
-        ).ask()
-        if session_id is None:  # Ctrl+C
-            sys.exit(0)
-    else:
-        session_id = "__new__"
+    session_id = _select_session(sessions)
 
     # Загружаем историю или начинаем новую
     if session_id != "__new__":
