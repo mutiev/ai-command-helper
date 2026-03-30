@@ -97,8 +97,7 @@ def read_api_key() -> str:
         sys.exit(1)
     try:
         import getpass
-        print(color("│  ", CYAN), end="")
-        key = getpass.getpass("Введите API-ключ (ввод скрыт): ").strip()
+        key = getpass.getpass(color("│  ", CYAN) + "Введите API-ключ (ввод скрыт): ").strip()
     except (KeyboardInterrupt, EOFError):
         print()
         sys.exit(0)
@@ -422,9 +421,11 @@ def main():
         try:
             if _tty():
                 print(color("❯ ", BOLD + CYAN), end="", flush=True)
-            query = input().strip()
-        except (EOFError, KeyboardInterrupt):
+            query = sys.stdin.buffer.readline().decode("utf-8", errors="replace").strip()
+        except (KeyboardInterrupt):
             print()
+            break
+        if not query:
             break
 
         if not query:
