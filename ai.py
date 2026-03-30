@@ -25,12 +25,22 @@ from pathlib import Path
 
 VENV_DIR = Path.home() / ".local" / "share" / "ai" / "venv"
 
+def _reexec_in_venv():
+    """Перезапуск через Python из venv (мгновенно, без повторной установки)."""
+    venv_python = VENV_DIR / "bin" / "python"
+    if venv_python.is_file() and Path(sys.executable).resolve() != venv_python.resolve():
+        os.execv(str(venv_python), [str(venv_python)] + sys.argv)
+
 def ensure_deps():
     try:
         import anthropic  # noqa: F401
         return
     except ImportError:
         pass
+
+    # Если venv уже создан — просто перезапуск через него
+    if (VENV_DIR / "bin" / "python").is_file():
+        _reexec_in_venv()
 
     # Попытка прямой установки через pip
     try:
@@ -53,8 +63,7 @@ def ensure_deps():
         [venv_pip, "install", "-q", "anthropic"],
         stdout=subprocess.DEVNULL,
     )
-    venv_python = str(VENV_DIR / "bin" / "python")
-    os.execv(venv_python, [venv_python] + sys.argv)
+    _reexec_in_venv()
 
 ensure_deps()
 import anthropic  # noqa: E402
