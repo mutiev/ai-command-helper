@@ -153,10 +153,7 @@ else
         fi
     else
         # Pipe-режим (curl | bash)
-        warn "Ключ не указан (запущено через pipe). Задайте после установки:"
-        dim "    echo 'sk-ant-...' > $KEY_FILE && chmod 600 $KEY_FILE"
-        dim "    # или передайте через переменную:"
-        dim "    ANTHROPIC_API_KEY=sk-ant-... bash install.sh"
+        warn "Ключ не указан — ${BOLD}ai${RESET} запросит его при первом запуске и сохранит автоматически."
     fi
 fi
 

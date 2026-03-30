@@ -85,10 +85,39 @@ def read_api_key() -> str:
         key = KEY_FILE.read_text().strip()
         if key:
             return key
-    print(color("✗ API-ключ не найден.", BOLD), file=sys.stderr)
-    print(f"  Создайте файл: {KEY_FILE}", file=sys.stderr)
-    print( "  Или задайте переменную ANTHROPIC_API_KEY", file=sys.stderr)
-    sys.exit(1)
+    # 3. интерактивный запрос при первом запуске
+    print(color("┌─ Первый запуск: API-ключ не найден ─────────────────────", CYAN))
+    print(color("│", CYAN))
+    print(color("│", CYAN) + f"  Получить ключ: {CYAN}https://console.anthropic.com/settings/keys{RESET}")
+    print(color("│", CYAN))
+    if not sys.stdin.isatty():
+        print(color("│", CYAN) + color("  ✗ stdin не является терминалом — не могу запросить ключ.", BOLD))
+        print(color("│", CYAN) + f"  Сохраните вручную: echo 'sk-ant-...' > {KEY_FILE} && chmod 600 {KEY_FILE}")
+        print(color("└──────────────────────────────────────────────────────────", CYAN))
+        sys.exit(1)
+    try:
+        import getpass
+        print(color("│  ", CYAN), end="")
+        key = getpass.getpass("Введите API-ключ (ввод скрыт): ").strip()
+    except (KeyboardInterrupt, EOFError):
+        print()
+        sys.exit(0)
+    key = key.strip()
+    if not key:
+        print(color("│  ✗ Пустой ключ — выход.", BOLD))
+        print(color("└──────────────────────────────────────────────────────────", CYAN))
+        sys.exit(1)
+    if not key.startswith("sk-ant-"):
+        print(color("│  ✗ Ключ должен начинаться с sk-ant-", BOLD))
+        print(color("└──────────────────────────────────────────────────────────", CYAN))
+        sys.exit(1)
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    KEY_FILE.write_text(key)
+    KEY_FILE.chmod(stat.S_IRUSR | stat.S_IWUSR)  # chmod 600
+    print(color("│  ✓ ", GREEN) + f"Ключ сохранён в {KEY_FILE}")
+    print(color("└──────────────────────────────────────────────────────────", CYAN))
+    print()
+    return key
 
 def read_system_prompt() -> str:
     if SYSTEM_FILE.exists():
