@@ -510,6 +510,23 @@ def delete_session(session_id: str) -> bool:
     return False
 
 
+def _replay_session(messages: list):
+    """Выводит историю переписки из загруженной сессии."""
+    print(color("─" * 60, DIM))
+    for m in messages:
+        content = m.get("content")
+        if not isinstance(content, str):
+            continue
+        if m["role"] == "user":
+            print(color("❯ ", BOLD + CYAN) + color(content, BOLD))
+        else:
+            print()
+            render(content)
+            print()
+    print(color("─" * 60, DIM))
+    print()
+
+
 # ── Интерактивное меню ────────────────────────────────────────────────────────
 
 def _top_entries(path: Path = None, n: int = 10) -> list:
@@ -584,7 +601,7 @@ def _select_session(sessions: list) -> str:
         if not sessions:
             return "__new__"
 
-        q = questionary.select("Сессия (d — удалить):", choices=choices)
+        q = questionary.select("Сессия (d — удалить):\n", choices=choices)
 
         # Keybinding 'd' → удалить выбранную сессию
         kb = KeyBindings()
@@ -650,8 +667,9 @@ def interactive_menu() -> tuple:
 
     if ctx_choices:
         selected = questionary.checkbox(
-            "Контекст (Space — выбрать, Enter — продолжить):",
+            "Контекст (Space — выбрать, Enter — продолжить):\n",
             choices=ctx_choices,
+            #instruction=" ",
         ).ask()
         if selected is None:  # Ctrl+C
             sys.exit(0)
@@ -879,17 +897,15 @@ def main():
         extra_dirs = list(args.dir)
         extra_files = list(args.file)
         if messages:
-            n = sum(1 for m in messages if m["role"] == "user")
-            print(color(f"  ↻ Сессия «{session_id}» ({n} обменов)", DIM + YELLOW))
+            _replay_session(messages)
     elif _tty():
         # Интерактивное меню
         print()
         messages, menu_dirs, menu_files, session_id = interactive_menu()
         extra_dirs = list(args.dir) + menu_dirs
         extra_files = list(args.file) + menu_files
-        if load_session(session_id) != []:
-            n = sum(1 for m in messages if m["role"] == "user")
-            print(color(f"\n  ↻ Загружена сессия ({n} обменов)", DIM + YELLOW))
+        if messages:
+            _replay_session(messages)
     else:
         # Не-TTY: новая сессия без меню
         session_id = new_session_id()
