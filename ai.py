@@ -542,20 +542,20 @@ def interactive_menu() -> tuple:
         choices.append(questionary.Separator(f"  … и ещё {len(sessions) - 5} сессий"))
 
     choices.append(questionary.Separator())
-    choices.append(questionary.Choice(title="✚ Новая сессия", value=None))
+    choices.append(questionary.Choice(title="✚ Новая сессия", value="__new__"))
 
     if sessions:
         session_id = questionary.select(
             "Сессия:",
             choices=choices,
         ).ask()
-        if session_id is False:  # Ctrl+C
+        if session_id is None:  # Ctrl+C
             sys.exit(0)
     else:
-        session_id = None
+        session_id = "__new__"
 
     # Загружаем историю или начинаем новую
-    if session_id is not None:
+    if session_id != "__new__":
         messages = load_session(session_id)
     else:
         session_id = new_session_id()
@@ -819,23 +819,26 @@ def main():
             if _tty():
                 print(color("❯ ", BOLD + CYAN), end="", flush=True)
             query = sys.stdin.buffer.readline().decode("utf-8", errors="replace").strip()
-        except (KeyboardInterrupt):
+        except KeyboardInterrupt:
             print()
             break
         if not query:
             break
-
-        if not query:
-            continue
         if query.lower() in ("exit", "quit", "q", "выход"):
             break
 
         messages.append({"role": "user", "content": query})
-        answer = ask(client, messages, full_system)
+        try:
+            answer = ask(client, messages, full_system)
+        except KeyboardInterrupt:
+            messages.pop()  # убираем незавершённый вопрос
+            print(color("\n  ⏹ Прервано", DIM))
+            continue
         messages.append({"role": "assistant", "content": answer})
 
         # Автосохранение после каждого обмена
-        save_session(session_id, messages)
+        if not args.no_save:
+            save_session(session_id, messages)
 
         print()
         render(answer)
