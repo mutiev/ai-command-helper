@@ -100,7 +100,7 @@ ai --setup
 ### Через curl (рекомендуется)
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/mutiev/ai-command-helper/main/install.sh?$(date +%s)" | bash
+curl -fsSL "https://raw.githubusercontent.com/mutiev/ai-command-helper/minimal/install.sh?$(date +%s)" | bash
 ```
 
 Скрипт:

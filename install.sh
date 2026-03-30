@@ -22,7 +22,7 @@ dim()     { echo -e "${DIM}$*${RESET}"; }
 # ── Параметры ─────────────────────────────────────────────────────────────────
 GITHUB_USER="mutiev"      # ← замените на ваш GitHub username
 GITHUB_REPO="ai-command-helper"             # ← репозиторий
-BRANCH="main"
+BRANCH="minimal"
 
 RAW_URL="https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/${BRANCH}/ai.py"
 
