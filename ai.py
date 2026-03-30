@@ -396,6 +396,18 @@ def main():
 
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
+    # ── Валидация путей ──────────────────────────────────────────────
+    for d in args.dir:
+        if not Path(d).expanduser().is_dir():
+            print(color(f"✗ Каталог не найден: {d}", BOLD), file=sys.stderr)
+            print(color(f"  Подсказка: -d — флаг для каталога, а не вопрос.", DIM), file=sys.stderr)
+            print(color(f"  Используйте:  ai \"ваш вопрос\"", DIM), file=sys.stderr)
+            sys.exit(1)
+    for f in args.file:
+        if not Path(f).expanduser().is_file():
+            print(color(f"✗ Файл не найден: {f}", BOLD), file=sys.stderr)
+            sys.exit(1)
+
     api_key = read_api_key()
     client  = anthropic.Anthropic(api_key=api_key)
     system  = read_system_prompt()
