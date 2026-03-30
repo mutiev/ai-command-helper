@@ -99,8 +99,14 @@ success "Скрипт установлен: $INSTALL_DIR/ai"
 # ── Устанавливаем зависимость ─────────────────────────────────────────────────
 VENV_DIR="$HOME/.local/share/ai/venv"
 
-info "Устанавливаю Python-зависимость (anthropic)..."
-if python3 -m pip install -q --user anthropic 2>/dev/null; then
+info "Проверяю Python-зависимость (anthropic)..."
+
+# Проверяем: anthropic уже доступен в системе или в venv?
+if python3 -c "import anthropic" 2>/dev/null; then
+    success "anthropic уже установлен (системный)"
+elif "$VENV_DIR/bin/python" -c "import anthropic" 2>/dev/null; then
+    success "anthropic уже установлен (venv: $VENV_DIR)"
+elif python3 -m pip install -q --user anthropic 2>/dev/null; then
     success "anthropic установлен"
 else
     warn "Обнаружено externally-managed окружение (PEP 668) — создаю venv..."
